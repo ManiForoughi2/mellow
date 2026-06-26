@@ -1,0 +1,19 @@
+[package]
+name = "oura_core"
+version = "0.1.0"
+edition = "2021"
+description = "Pure-Rust read-only decoder for the Oura Ring 4 BLE wire protocol"
+license = "GPL-3.0-or-later"
+
+# No external dependencies: AES-128-ECB, framing, decoders, time-resolution and
+# the control-plane frame builders are all implemented from first principles so
+# the crate is fully self-contained and embeddable (e.g. via a C ABI into iOS).
+
+[lib]
+name = "oura_core"
+crate-type = ["lib", "staticlib"]
+
+[features]
+default = []
+# `cabi` exposes a C ABI surface for embedding into the Swift app.
+cabi = []

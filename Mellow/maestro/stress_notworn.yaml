@@ -1,0 +1,9 @@
+appId: com.maniforoughi.mellow
+---
+- launchApp:
+    appId: com.maniforoughi.mellow
+    arguments: { MellowUIPreviewNotWorn: "YES" }
+    stopApp: true
+- tapOn: "Stress"
+- assertVisible: "RING NOT WORN"
+- takeScreenshot: /tmp/notworn_stress

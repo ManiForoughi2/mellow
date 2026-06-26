@@ -1,0 +1,66 @@
+name: Mellow
+options:
+  bundleIdPrefix: com.maniforoughi
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: "883U8FU57P"
+    CODE_SIGN_STYLE: Automatic
+    GENERATE_INFOPLIST_FILE: NO
+    SUPPORTS_MACCATALYST: "YES"
+    DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: "NO"
+    MARKETING_VERSION_MACCATALYST: "0.1.0"
+targets:
+  Mellow:
+    type: application
+    platform: iOS
+    sources:
+      - path: Mellow
+    dependencies:
+      - target: MellowWidget
+        embed: true
+      # The shared Rust protocol core (oura_core), as a prebuilt XCFramework.
+      # It's a static library, so it links into the binary (no embedding).
+      - framework: ../oura_core/build/OuraCore.xcframework
+        embed: false
+    preBuildScripts:
+      # Rebuild the Rust core's XCFramework before each app build so the linked
+      # OuraCore.xcframework is always in sync with oura_core/src.
+      - name: Build Rust core (oura_core)
+        script: |
+          "${SRCROOT}/../oura_core/build-ios-xcframework.sh"
+        basedOnDependencyAnalysis: false
+    settings:
+      base:
+        PRODUCT_NAME: Mellow
+        PRODUCT_BUNDLE_IDENTIFIER: com.maniforoughi.mellow
+        INFOPLIST_FILE: Mellow/App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Mellow/App/Mellow.entitlements
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ENABLE_BITCODE: NO
+        SWIFT_EMIT_LOC_STRINGS: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+  MellowWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: MellowWidget
+        excludes:
+          - "Info.plist"
+          - "MellowWidget.entitlements"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.maniforoughi.mellow.widget
+        PRODUCT_NAME: MellowWidget
+        INFOPLIST_FILE: MellowWidget/Info.plist
+        CODE_SIGN_ENTITLEMENTS: MellowWidget/MellowWidget.entitlements
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ENABLE_BITCODE: NO
+        SWIFT_EMIT_LOC_STRINGS: YES
+        SKIP_INSTALL: YES

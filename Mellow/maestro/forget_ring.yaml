@@ -1,0 +1,15 @@
+appId: com.maniforoughi.mellow
+---
+- launchApp:
+    appId: com.maniforoughi.mellow
+    arguments: { MellowUIPreview: "YES" }
+    stopApp: true
+- assertVisible: "Heart rate"
+- tapOn:
+    id: "gearshape"
+- assertVisible: "Forget ring"
+- takeScreenshot: /tmp/fr_settings
+- tapOn: "Forget ring"
+- assertVisible: "Release this ring?"
+- tapOn: "Release"
+- takeScreenshot: /tmp/fr_after

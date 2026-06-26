@@ -1,0 +1,22 @@
+Mellow
+Copyright (C) 2026 the Mellow authors
+Licensed under GPL-3.0. See LICENSE.
+
+Independent / clean-room provenance
+-----------------------------------
+Mellow is an independently created program. It was built from observed device
+behavior only. It contains no Oura source code, no decompiled binaries, no
+firmware, and no captured proprietary data. The Bluetooth protocol knowledge was
+derived solely by observing the author's own ring's traffic on the author's own
+hardware. Mellow is intended to achieve interoperability of an independently
+created program with a device the user owns (17 U.S.C. § 1201(f)).
+
+No keys, captures, or vendor data are distributed with this software. The 16-byte
+provisioning key is generated and controlled by the user, not extracted from Oura.
+
+Trademarks
+----------
+Mellow is not affiliated with, authorized, endorsed by, or sponsored by
+Ōura Health Oy. "Oura" and "Oura Ring" are trademarks of their respective owner
+and are used here only descriptively, to identify the hardware Mellow
+interoperates with. All other trademarks are the property of their owners.

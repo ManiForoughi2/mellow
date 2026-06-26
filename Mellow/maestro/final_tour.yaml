@@ -1,0 +1,18 @@
+appId: com.maniforoughi.mellow
+---
+- launchApp:
+    appId: com.maniforoughi.mellow
+    arguments: { MellowUIPreview: "YES" }
+    stopApp: true
+- assertVisible: "Heart rate"
+- takeScreenshot: /tmp/f_today
+- scroll
+- takeScreenshot: /tmp/f_today_scrolled
+- tapOn: "Stress"
+- assertVisible: "Stress trend"
+- takeScreenshot: /tmp/f_stress
+- tapOn: "Sleep"
+- takeScreenshot: /tmp/f_sleep
+- tapOn: "History"
+- assertVisible: "Your ring"
+- takeScreenshot: /tmp/f_history

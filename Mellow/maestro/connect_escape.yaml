@@ -1,0 +1,16 @@
+appId: com.maniforoughi.mellow
+---
+- launchApp:
+    appId: com.maniforoughi.mellow
+    stopApp: true
+- assertVisible: "How it works"
+- scrollUntilVisible:
+    element: "Claim My Ring"
+    direction: DOWN
+- takeScreenshot: /tmp/connect_intro
+- tapOn: "Claim My Ring"
+- assertVisible: "Cancel"
+- takeScreenshot: /tmp/connect_scanning
+- tapOn: "Cancel"
+- assertVisible: "How it works"
+- takeScreenshot: /tmp/connect_back
