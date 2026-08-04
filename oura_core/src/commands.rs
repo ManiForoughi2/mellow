@@ -67,7 +67,14 @@ pub mod param {
     pub const ACTIVITY_HR_AUX: u8 = 0x0B;
     pub const UNMAPPED_0D: u8 = 0x0D;
     pub const UNMAPPED_10: u8 = 0x10;
+    /// polled by the official app at connection, answers all zeroes
+    pub const UNMAPPED_12: u8 = 0x12;
 }
+
+/// the param sweep the official app performs once per connection, in order.
+/// not required to start a measurement; recorded so the connection flow can be
+/// matched against the app when diagnosing a ring that withholds features.
+pub const CONNECT_PARAM_SWEEP: [u8; 5] = [0x12, 0x0c, 0x0b, 0x04, 0x10];
 
 /// `2F 02 20 <param>` request the 4-byte param value
 pub fn read_param(param_id: u8) -> [u8; 4] {
@@ -84,11 +91,16 @@ pub fn write_param_byte2(param_id: u8, value: u8) -> [u8; 5] {
     [0x2f, 0x03, 0x26, param_id, value]
 }
 
-/// byte-perfect Daytime-HR mode write: `read_param(DHR)` then byte-0 (mode) and
-/// byte-2 (sub-mode) writes, matching the official app. frames in send order
+/// byte-perfect Daytime-HR mode write: byte-0 (mode) then byte-2 (sub-mode).
+/// frames in send order.
+///
+/// no `read_param` prefix. a capture of the official app on a second ring
+/// (2026-08-04, see EXTERNAL_CAPTURE_FINDINGS.md) shows it starts a measurement
+/// with exactly these two writes. it does issue `read_param` sweeps, but at
+/// connection time over params 0x12/0x0c/0x0b/0x04/0x10, unrelated to starting
+/// a measurement.
 pub fn set_dhr_mode(mode: u8, sub_mode: u8) -> Vec<Vec<u8>> {
     vec![
-        read_param(param::DHR).to_vec(),
         write_param_byte0(param::DHR, mode).to_vec(),
         write_param_byte2(param::DHR, sub_mode).to_vec(),
     ]
@@ -97,6 +109,12 @@ pub fn set_dhr_mode(mode: u8, sub_mode: u8) -> Vec<Vec<u8>> {
 /// on-demand HR burst: DHR mode=3 / sub-mode=2
 pub fn request_hr_on_demand() -> Vec<Vec<u8>> {
     set_dhr_mode(3, 2)
+}
+
+/// stop an on-demand burst the way the app does: mode back to 1 (automatic),
+/// subscription back to 0 (off). the ring also reverts on its own after ~20 s.
+pub fn stop_hr_on_demand() -> Vec<Vec<u8>> {
+    set_dhr_mode(1, 0)
 }
 
 /// toggle SpO2 sampling (byte-0 write to the SpO2 param)
@@ -194,10 +212,18 @@ mod tests {
 
     #[test]
     fn dhr_burst_sequence() {
+        // exactly what the official app writes to start a measurement
         let seq = request_hr_on_demand();
-        assert_eq!(seq.len(), 3);
-        assert_eq!(seq[0], vec![0x2f, 0x02, 0x20, 0x02]);
-        assert_eq!(seq[1], vec![0x2f, 0x03, 0x22, 0x02, 0x03]);
-        assert_eq!(seq[2], vec![0x2f, 0x03, 0x26, 0x02, 0x02]);
+        assert_eq!(seq.len(), 2);
+        assert_eq!(seq[0], vec![0x2f, 0x03, 0x22, 0x02, 0x03]);
+        assert_eq!(seq[1], vec![0x2f, 0x03, 0x26, 0x02, 0x02]);
+    }
+
+    #[test]
+    fn dhr_stop_sequence() {
+        let seq = stop_hr_on_demand();
+        assert_eq!(seq.len(), 2);
+        assert_eq!(seq[0], vec![0x2f, 0x03, 0x22, 0x02, 0x01]);
+        assert_eq!(seq[1], vec![0x2f, 0x03, 0x26, 0x02, 0x00]);
     }
 }

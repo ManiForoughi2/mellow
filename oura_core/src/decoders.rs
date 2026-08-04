@@ -483,6 +483,18 @@ fn decode_spo2_ibi_and_amplitude_event(p: &[u8]) -> R {
     Ok(m)
 }
 
+/// `0x72 API_SLEEP_ACM_PERIOD`: six little-endian u16 movement accumulators for
+/// one 30-second epoch.
+///
+/// field layout established by aligning 1146 of these records against a
+/// labelled 30-second hypnogram exported from an Oura account for the same
+/// night (2026-08-04 capture set). records arrive at exactly 300 ring ticks,
+/// which is 30.0 s at the ring's 10 Hz clock.
+///
+/// medians by labelled stage were awake 60/115/49, deep 14/27/13,
+/// light 15/30/14, rem 21/41/19 for `acm0..acm2`. that separates wake from
+/// sleep decisively and deep from light barely at all: this is a motion record,
+/// not a stage classification. nothing in it encodes deep/light/REM/awake.
 fn decode_sleep_acm_period(p: &[u8]) -> R {
     if p.len() != 12 {
         return Err(err(format!(
@@ -491,8 +503,73 @@ fn decode_sleep_acm_period(p: &[u8]) -> R {
         )));
     }
     let mut m = Map::new();
-    m.insert("header_hex", Value::Str(hex(&p[0..6])));
-    m.insert("u8_at_off_6_11", u8_array(&p[6..12]));
+    let acm: Vec<Value> = (0..6)
+        .map(|i| Value::Int(u16_le(p, i * 2) as i64))
+        .collect();
+    for (i, v) in acm.iter().enumerate() {
+        if let Value::Int(n) = v {
+            m.insert(format!("acm{i}"), Value::Int(*n));
+        }
+    }
+    m.insert("acm", Value::Array(acm));
+    m.insert("epoch_seconds", Value::Int(30));
+    Ok(m)
+}
+
+/// `0x2F` sub-op `0x28` parameter push for feature `0x02` (Daytime HR), the
+/// record the ring emits once live HR is running.
+///
+/// wire shape, payload after the `2f <len> 28 02` header:
+/// `<quality:u8> 02 00 00 <ibi:u16le> 00 00 00 00 12 0a 7f`
+///
+/// **the IBI unit is 0.2 ms.** two captures labelled 58 bpm by the wearer
+/// decode to 58.5 and 58.2 bpm at that scale; the 0.25 ms alternative gives
+/// 46.8 and 46.6 bpm and is excluded.
+///
+/// `quality` is `0x09` for clean samples and `0x19` for suspect ones. across
+/// both captures 2 of 31 `0x09` samples fell outside a physiological interval
+/// against 4 of 9 `0x19` samples, so treat `0x19` as low confidence rather
+/// than discarding it.
+/// dispatch a whole `0x2F` feature-plane notification frame.
+///
+/// frames look like `2f <len> <sub_op> <feature_id> <payload..>`, where `len`
+/// counts everything after itself. returns `None` for frames this module has
+/// nothing to say about (status replies, acks), so the caller can fall through
+/// to its existing handling.
+pub fn decode_feature_frame(frame: &[u8]) -> Option<Map> {
+    if frame.len() < 4 || frame[0] != 0x2f {
+        return None;
+    }
+    let len = frame[1] as usize;
+    if frame.len() < 2 + len {
+        return None;
+    }
+    let (sub_op, feature_id) = (frame[2], frame[3]);
+    let payload = &frame[4..2 + len];
+    match (sub_op, feature_id) {
+        // 0x28 parameter push for Daytime HR: the live heart-rate record
+        (0x28, 0x02) => decode_dhr_param_push(payload).ok(),
+        _ => None,
+    }
+}
+
+pub fn decode_dhr_param_push(p: &[u8]) -> R {
+    if p.len() != 13 {
+        return Err(err(format!(
+            "DhrParamPush payload must be 13 bytes, got {}",
+            p.len()
+        )));
+    }
+    let raw = u16_le(p, 4) as i64;
+    let mut m = Map::new();
+    m.insert("quality", Value::Int(p[0] as i64));
+    m.insert("low_confidence", Value::Bool(p[0] & 0x10 != 0));
+    m.insert("ibi_raw", Value::Int(raw));
+    let ibi_ms = raw as f64 * 0.2;
+    m.insert("ibi_ms", Value::Float(ibi_ms));
+    if ibi_ms > 0.0 {
+        m.insert("bpm", Value::Float(60_000.0 / ibi_ms));
+    }
     Ok(m)
 }
 
@@ -827,5 +904,55 @@ mod tests {
             m.get("_decoder"),
             Some(&Value::Str("raw_hex_fallback".to_string()))
         );
+    }
+
+    /// bytes lifted verbatim from a capture of the official app running a live
+    /// measurement the wearer recorded as 58 bpm.
+    #[test]
+    fn dhr_param_push_known_vector() {
+        let frame = [
+            0x2f, 0x0f, 0x28, 0x02, 0x09, 0x02, 0x00, 0x00, 0xd4, 0x13, 0x00, 0x00, 0x00, 0x00,
+            0x12, 0x0a, 0x7f,
+        ];
+        let m = decode_feature_frame(&frame).expect("frame should decode");
+        assert_eq!(m.get("ibi_raw"), Some(&Value::Int(0x13d4)));
+        assert_eq!(m.get("low_confidence"), Some(&Value::Bool(false)));
+        let bpm = match m.get("bpm") {
+            Some(Value::Float(b)) => *b,
+            other => panic!("expected bpm, got {other:?}"),
+        };
+        // 5076 raw * 0.2 ms = 1015.2 ms -> 59.1 bpm, against a 58 bpm label
+        assert!((bpm - 59.1).abs() < 0.2, "bpm was {bpm}");
+    }
+
+    #[test]
+    fn dhr_param_push_flags_low_confidence() {
+        let frame = [
+            0x2f, 0x0f, 0x28, 0x02, 0x19, 0x02, 0x00, 0x00, 0xdb, 0x33, 0x00, 0x00, 0x00, 0x00,
+            0x12, 0x0a, 0x7f,
+        ];
+        let m = decode_feature_frame(&frame).expect("frame should decode");
+        assert_eq!(m.get("low_confidence"), Some(&Value::Bool(true)));
+    }
+
+    #[test]
+    fn feature_frame_ignores_status_replies() {
+        // 2f 03 23 02 00, a mode-set acknowledgement
+        assert!(decode_feature_frame(&[0x2f, 0x03, 0x23, 0x02, 0x00]).is_none());
+    }
+
+    /// first 0x72 record of the analysed night, labelled `awake` in the
+    /// exported hypnogram.
+    #[test]
+    fn sleep_acm_period_known_vector() {
+        let p = [
+            0x1b, 0x00, 0x32, 0x00, 0x18, 0x00, 0x31, 0x00, 0x35, 0x00, 0x07, 0x00,
+        ];
+        let m = decode(0x72, &p);
+        assert_eq!(m.get("acm0"), Some(&Value::Int(27)));
+        assert_eq!(m.get("acm1"), Some(&Value::Int(50)));
+        assert_eq!(m.get("acm2"), Some(&Value::Int(24)));
+        assert_eq!(m.get("acm5"), Some(&Value::Int(7)));
+        assert_eq!(m.get("epoch_seconds"), Some(&Value::Int(30)));
     }
 }

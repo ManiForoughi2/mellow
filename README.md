@@ -16,7 +16,11 @@ Early build for tinkerers, not a replacement for the official app.
 
 **Built, waiting on data:** recovery, sleep, strain, trends, history, a widget, Apple Health export. The screens are wired to the metrics engine, but a recovery or sleep score needs several nights of baseline first. Until then the app shows what the ring reports and hides the scores rather than printing a made-up number.
 
-**Unverified:** live streaming has only run against my ring. A firmware update can change the protocol and break decoding.
+**Verified beyond one ring:** the stored-heart-rate decoder (`0x60`) has been checked against a capture from someone else's Ring 4, and reproduces Oura's own numbers for that night: median 63.2 bpm against their reported 62.875 average, 5th percentile 56 against their reported low of 58.
+
+**Unverified:** live streaming has still only run end-to-end against my ring. A firmware update can change the protocol and break decoding.
+
+**Not on the wire:** sleep stages and step counts are not transmitted by the ring. It sends movement, inter-beat intervals and temperature, and the phone classifies. See [RESEARCH.md](RESEARCH.md).
 
 ## Connecting
 

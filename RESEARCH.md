@@ -8,30 +8,60 @@ references below are comparison points.
 ## Live heart rate
 
 Live heart rate is controlled by the `0x2F` Feature API rather than the record
-subscription. The documented sequence to force live HR is `2f 02 20 02`, then
-`2f 03 22 02 03` (set Daytime-HR mode to burst), then `2f 03 26 02 02` (set
-subscription to Latest), re-triggered roughly every 15 seconds because the ring
-reverts after about 20.
+subscription.
 
-Sending this sequence on a self-provisioned ring does not by itself produce live
-HR records. The likely causes, in order:
+The official app's start sequence is now known from a capture of it running on
+a second ring, against measurements the wearer labelled by hand
+([EXTERNAL_CAPTURE_FINDINGS.md](EXTERNAL_CAPTURE_FINDINGS.md)). It is **two writes**:
 
-1. Self-provisioned gating. Public references assume the ring was onboarded by the
-   official app. The `24 10 <key>` self-provision path is not covered by them, and
-   the firmware may withhold sensor features until a fuller onboarding (for
-   example `0x20 Set User Info`).
-2. Wear-state gating. A feature-subscription failure of `0x03` means "not in
-   finger." Feature status values include searching, no reliable PPG, cold
-   fingers, and too much movement. Reading feature status (`2f 02 20 02`) and the
-   state events (`0x45` / `0x53`) shows the cause before assuming a protocol
-   error.
-3. Skipping the full post-handshake capability exchange can delay the ring from
-   emitting some event categories.
+```
+2f 03 22 02 03     Daytime-HR mode = 3 (requested-subscription / burst)
+2f 03 26 02 02     Daytime-HR subscription = 2 (Latest)
+```
 
-The way to resolve the remaining gap is to capture the official app on the ring
-while triggering live HR, diff its `0x2f` writes and state-event timing against
-the project's, and replay the difference. Re-onboarding overwrites a
-self-provisioned key, so the ring must be re-provisioned afterward.
+and to stop, mode = 1 and subscription = 0. The ring also reverts on its own
+after about 20 seconds, so a held measurement needs re-triggering roughly every
+15.
+
+This project previously prefixed the sequence with `2f 02 20 02` (get feature
+status). **The app does not do that.** It sweeps feature status once per
+connection, over `0x12, 0x0c, 0x0b, 0x04, 0x10`, unrelated to starting a
+measurement. The prefix has been removed.
+
+Once running, the ring emits parameter pushes:
+
+```
+2f 0f 28 02 <quality> 02 00 00 <ibi:u16le> 00 00 00 00 12 0a 7f
+```
+
+**The IBI unit is 0.2 ms.** Two captures the wearer labelled 58 bpm decode to
+58.5 and 58.2 bpm at that scale; 0.25 ms gives 46.8 and 46.6 and is excluded.
+`quality` is `0x09` clean, `0x19` suspect. See `decode_dhr_param_push`.
+
+### What this does and does not settle
+
+The captured ring was onboarded by the official app, so this does not directly
+test a self-provisioned one. It does dispose of one theory: the app does
+strictly *less* than this project did, so failure on a self-provisioned ring was
+never caused by a missing step in the start sequence.
+
+`0x20 Set User Info`, previously the leading hypothesis for a gate, **never
+appears in any of the five captures.** The complete set of phone-to-ring opcodes
+observed is `0x01 0x02 0x08 0x0c 0x10 0x12 0x16 0x18 0x1c 0x28 0x2f`. A fuller
+onboarding therefore looks unlikely to be the missing ingredient.
+
+The remaining live hypothesis is wear-state gating. A feature-subscription
+failure of `0x03` means "not in finger"; status values also cover searching, no
+reliable PPG, cold fingers and too much movement. Read feature status and the
+`0x45` / `0x53` state events before assuming a protocol error.
+
+## Ring clock
+
+The time exchange is `12 09 <phone_epoch:u32le> 00 00 00 00 06`, answered with
+`13 05 <ring_clock:u32le> 00`. Across 35 exchanges in one capture the ring
+counter advances about **ten ticks per wall-clock second**: record timestamps
+are deciseconds, not seconds. Reading them as seconds inflates every interval
+tenfold. The epoch offset is per-ring and recovered from the exchange itself.
 
 ## Feature API reference
 
@@ -57,6 +87,39 @@ Hardware: the Ring 4 uses a MAX86178F analog front end and an Infineon PSoC 6,
 with a green LED at roughly 50 Hz for heart rate. The official live-HR path
 requires the ring worn palm-side, still for about 10 seconds, on warm skin.
 
+## Sleep staging is not on the wire
+
+The ring does not transmit a deep/light/REM/awake byte, and the evidence is now
+direct rather than inferred.
+
+`0x72 API_SLEEP_ACM_PERIOD` is the 30-second epoch record, arriving at exactly
+300 ring ticks. Aligning 1146 of them against a labelled 30-second hypnogram
+exported from an Oura account for the same night gives medians of awake
+60/115/49, deep 14/27/13, light 15/30/14 and rem 21/41/19 on the first three
+u16 fields. Wake separates decisively; deep and light are nearly identical.
+That is a movement record.
+
+The account export for the same night reports
+`sleep_algorithm_version = v2` and
+`sleep_analysis_reason = foreground_sleep_analysis`: the staging runs in the
+app, from motion, IBI and temperature.
+
+`0x6a SleepPeriodInfo`, which carries the coarse three-state `sleep_state` this
+project decodes, **does not appear once in that capture**, while `0x69` and
+`0x6b` both do at 30- and 26-minute cadence. It cannot be relied on as the
+staging source.
+
+The same pattern holds for steps. `0x7e` / `0x7f`
+(`API_REAL_STEP_EVENT_FEATURE_ONE` / `_TWO`) carry 14 bytes of high-entropy data
+at 30-second cadence and no step total; the app polls feature `0x0b`
+(Real steps) and gets `01 01 02 00`. Two walks the wearer counted at 58 and 65
+steps produced no field tracking either number.
+
+The consistent picture is that the ring exports **features** and the phone runs
+the classifier, for both staging and step counting. Reproducing either means
+training a model, not finding a byte. A labelled night of aligned epochs plus
+per-5-minute HR and HRV is the dataset for the sleep half of that.
+
 ## Prior art
 
 - `ringverse/protocol` (https://github.com/ringverse/protocol/blob/main/oura/BLE.md):
@@ -70,8 +133,7 @@ requires the ring worn palm-side, still for about 10 seconds, on warm skin.
 
 Unlike some fitness bands, the ring exposes no standard Bluetooth Heart Rate
 Service; all data is behind the authenticated proprietary service, so the
-standard-service shortcut does not apply here. No public project has shipped a
-working live-HR-over-BLE path for the Oura ring.
+standard-service shortcut does not apply here.
 
 ## Adjacent references
 
